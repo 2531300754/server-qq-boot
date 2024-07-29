@@ -33,7 +33,7 @@ public class WebSocketHandler extends TextWebSocketHandler {
     @Autowired
     private GuildProperties guildProperties;
 
-    private WebSocketSession session;
+    private volatile WebSocketSession session;
 
     @Autowired
     private GPTHandler gptHandler;
@@ -130,9 +130,7 @@ public class WebSocketHandler extends TextWebSocketHandler {
                 try {
                     Thread.sleep(this.bot.getHeartbeatInterval());
                     if (!this.bot.getIsStop()) {
-                        synchronized (this.session) {
-                            this.session.sendMessage(new TextMessage(jsonObject.toString()));
-                        }
+                        sendMessage(jsonObject.toString());
                     }
                 } catch (Exception e) {
                     log.error(e.getMessage(), e);
@@ -142,6 +140,22 @@ public class WebSocketHandler extends TextWebSocketHandler {
         heartbeatThread.setDaemon(true);//守护线程
         heartbeatThread.setName("HeartbeatThread");
         heartbeatThread.start();
+    }
+
+    private void sendMessage(String message) {
+        synchronized (this) {
+            if (this.session != null && this.session.isOpen()) {
+                try {
+                    this.session.sendMessage(new TextMessage(message));
+                } catch (IllegalStateException e) {
+                    log.warn("试图在无效状态下发送消息: " + e.getMessage());
+                } catch (Exception e) {
+                    log.error("发送WebSocket消息失败: " + e.getMessage(), e);
+                }
+            } else {
+                log.warn("WebSocket会话未打开，无法发送消息");
+            }
+        }
     }
 
     @SneakyThrows
@@ -154,12 +168,8 @@ public class WebSocketHandler extends TextWebSocketHandler {
                 .op(Opcode.IDENTIFY.getCode())
                 .d(authData)
                 .build();
-        synchronized (this.session) {
-            this.session.sendMessage(new TextMessage(payload.toJsonString()));
-        }
+        sendMessage(payload.toJsonString());
     }
-
-
 
     private void initHeartbeatInterval(Payload payload) {
         Long interval = payload.getD().getLong("heartbeat_interval");
@@ -171,4 +181,3 @@ public class WebSocketHandler extends TextWebSocketHandler {
         this.bot.setHeartbeatInterval(heartbeatInterval);
     }
 }
-
